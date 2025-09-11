@@ -7,7 +7,7 @@ from flask import Flask, request
 logging.basicConfig(level=logging.INFO)
 
 # Bot config
-TOKEN = os.getenv("TELEGRAM_TOKEN")
+TOKEN = os.getenv("8323791507:AAHffJ1lQal40YGf0SaNcjxSLp4ZkrHFniw")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # Optional if you want to lock to one user
 TELEGRAM_URL = f"https://api.telegram.org/bot{TOKEN}"
 
