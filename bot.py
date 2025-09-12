@@ -121,7 +121,7 @@ def get_today_total():
 
 def get_by_user_month():
     with db_conn() as conn:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
                 SELECT COALESCE(username, user_id::text) AS user,
                        SUM(amount) as total
@@ -131,6 +131,7 @@ def get_by_user_month():
                 ORDER BY total DESC
             """)
             return cur.fetchall()
+
 
 
 
