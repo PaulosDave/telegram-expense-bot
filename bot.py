@@ -75,6 +75,14 @@ def init_db():
             cur.execute("INSERT INTO settings (key, value) SELECT 'budget', %s WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key='budget')", (str(MONTHLY_BUDGET_ENV),))
         conn.commit()
     logging.info("Database initialized.")
+    
+    def get_user_today_total(user_id):
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT SUM(amount) FROM expenses WHERE user_id=%s AND created_at::date = CURRENT_DATE", (user_id,))
+            r = cur.fetchone()
+            return float(r[0]) if r and r[0] is not None else 0.0
+
 
 # ---------- DB operations ----------
 def add_expense_db(user_id, username, amount, category, note):
@@ -329,8 +337,8 @@ def main():
                             amt, cat, note = parsed
                             add_expense_db(user_id, username, amt, cat, note)
                             send_message(chat_id, f"✅ Logged {amt} AED ({cat})")
-                    elif cmd == "/daily":
-                        send_message(chat_id, f"Today's total: {get_today_total()} AED")
+                    elif cmd == "/daily" or cmd == "/today":
+                        send_message(chat_id, f"Your spending today: {get_user_today_total(user_id)} AED")
                     elif cmd == "/monthly" or cmd == "/total":
                         send_message(chat_id, f"This month's total: {get_month_totals()} AED")
                     elif cmd == "/predict":
