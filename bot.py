@@ -76,13 +76,7 @@ def init_db():
         conn.commit()
     logging.info("Database initialized.")
     
-    def get_user_today_total(user_id):
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT SUM(amount) FROM expenses WHERE user_id=%s AND created_at::date = CURRENT_DATE", (user_id,))
-            r = cur.fetchone()
-            return float(r[0]) if r and r[0] is not None else 0.0
-
+    
 
 # ---------- DB operations ----------
 def add_expense_db(user_id, username, amount, category, note):
