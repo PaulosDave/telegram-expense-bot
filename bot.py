@@ -20,7 +20,7 @@ import psycopg2
 import psycopg2.extras
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -72,17 +72,22 @@ def init_db():
             cur.execute(sql_create_expenses)
             cur.execute(sql_create_settings)
             # ensure budget exists in settings (if absent, use env)
-            cur.execute("INSERT INTO settings (key, value) SELECT 'budget', %s WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key='budget')", (str(MONTHLY_BUDGET_ENV),))
+            cur.execute(
+                "INSERT INTO settings (key, value) SELECT 'budget', %s WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key='budget')",
+                (str(MONTHLY_BUDGET_ENV),),
+            )
         conn.commit()
     logging.info("Database initialized.")
-    
-    def get_user_today_total(user_id):
+
+def get_user_today_total(user_id):
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT SUM(amount) FROM expenses WHERE user_id=%s AND created_at::date = CURRENT_DATE", (user_id,))
+            cur.execute(
+                "SELECT SUM(amount) FROM expenses WHERE user_id=%s AND created_at::date = CURRENT_DATE",
+                (user_id,),
+            )
             r = cur.fetchone()
             return float(r[0]) if r and r[0] is not None else 0.0
-
 
 # ---------- DB operations ----------
 def add_expense_db(user_id, username, amount, category, note):
@@ -90,7 +95,7 @@ def add_expense_db(user_id, username, amount, category, note):
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO expenses (user_id, username, amount, category, note) VALUES (%s,%s,%s,%s,%s)",
-                (user_id, username, Decimal(amount), category, note)
+                (user_id, username, Decimal(amount), category, note),
             )
         conn.commit()
 
@@ -117,22 +122,29 @@ def get_today_total():
 def get_by_user_month():
     with db_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT COALESCE(username, user_id)::text AS user, SUM(amount) as total FROM expenses WHERE to_char(created_at,'YYYY-MM') = to_char(now(),'YYYY-MM') GROUP BY user ORDER BY total DESC")
+            cur.execute(
+                "SELECT COALESCE(username, user_id)::text AS user, SUM(amount) as total "
+                "FROM expenses WHERE to_char(created_at,'YYYY-MM') = to_char(now(),'YYYY-MM') "
+                "GROUP BY user ORDER BY total DESC"
+            )
             rows = cur.fetchall()
-            # convert Decimal to float
-            return [{ "user": r["user"], "total": float(r["total"]) } for r in rows]
+            return [{"user": r["user"], "total": float(r["total"])} for r in rows]
 
 def get_user_month_total(user_id):
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT SUM(amount) FROM expenses WHERE user_id=%s AND to_char(created_at,'YYYY-MM') = to_char(now(),'YYYY-MM')", (user_id,))
+            cur.execute(
+                "SELECT SUM(amount) FROM expenses WHERE user_id=%s AND to_char(created_at,'YYYY-MM') = to_char(now(),'YYYY-MM')",
+                (user_id,),
+            )
             r = cur.fetchone()
             return float(r[0]) if r and r[0] is not None else 0.0
 
 def delete_last_user_expense(user_id):
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 DELETE FROM expenses
                 WHERE id = (
                   SELECT id FROM expenses
@@ -141,7 +153,9 @@ def delete_last_user_expense(user_id):
                   LIMIT 1
                 )
                 RETURNING id;
-            """, (user_id,))
+                """,
+                (user_id,),
+            )
             r = cur.fetchone()
         conn.commit()
         return bool(r and r[0])
@@ -156,7 +170,11 @@ def get_setting(key):
 def set_setting(key, value):
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO settings (key,value) VALUES (%s,%s) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (key, str(value)))
+            cur.execute(
+                "INSERT INTO settings (key,value) VALUES (%s,%s) "
+                "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
+                (key, str(value)),
+            )
         conn.commit()
 
 def get_budget():
@@ -178,7 +196,9 @@ def send_message(chat_id, text):
 
 def send_markdown(chat_id, text):
     try:
-        resp = requests.post(URL + "/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"})
+        resp = requests.post(
+            URL + "/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        )
         resp.raise_for_status()
     except Exception as e:
         logging.exception("send_message failed: %s", e)
@@ -188,7 +208,7 @@ def fetch_updates(offset=None, timeout=60):
         params = {"timeout": timeout}
         if offset:
             params["offset"] = offset
-        r = requests.get(URL + "/getUpdates", params=params, timeout=timeout+10)
+        r = requests.get(URL + "/getUpdates", params=params, timeout=timeout + 10)
         return r.json()
     except Exception as e:
         logging.exception("fetch_updates failed: %s", e)
@@ -198,12 +218,8 @@ def fetch_updates(offset=None, timeout=60):
 def days_in_month(dt=None):
     if dt is None:
         dt = datetime.now(tz)
-    y, m = dt.year, dt.month
-    next_month = date(y + (m // 12), ((m % 12) + 1), 1)
-    last_day = (next_month - date(1,1,1)).day  # trick won't work; simpler below
-    # use calendar:
     import calendar
-    return calendar.monthrange(y, m)[1]
+    return calendar.monthrange(dt.year, dt.month)[1]
 
 def compute_forecast_and_stats():
     total_month = get_month_totals()
@@ -223,7 +239,7 @@ def compute_forecast_and_stats():
         "remaining": round(remaining, 2),
         "days_left": days_left,
         "days_in_month": dim,
-        "will_exceed": predicted > get_budget()
+        "will_exceed": predicted > get_budget(),
     }
 
 # ---------- Command parsing ----------
@@ -233,23 +249,14 @@ def is_allowed(user_id):
     return str(user_id) in ALLOWED_USER_IDS
 
 def parse_expense_text(text):
-    """
-    Accepts:
-      "add 50 food lunch with friend"
-      "50 food lunch"
-      "/spent 50 food lunch"
-    Returns (amount, category, note) or None if cannot parse.
-    """
     t = text.strip()
     if t.startswith("/spent"):
         t = t[len("/spent"):].strip()
-    # allow leading "add" or "spent"
     if t.lower().startswith("add "):
-        t = t.split(" ",1)[1].strip()
+        t = t.split(" ", 1)[1].strip()
     parts = t.split()
     if not parts:
         return None
-    # try parse first token as amount
     try:
         amt = parts[0].replace(",", "")
         amt_val = float(amt)
@@ -271,7 +278,7 @@ def send_daily_report_job():
         f"This month: {stats['total_month']} AED",
         f"Days left: {stats['days_left']} / {stats['days_in_month']}",
         f"Budget: {get_budget()} AED, Remaining: {stats['remaining']} AED",
-        f"Predicted end: {stats['predicted']} AED {'⚠️ Over budget' if stats['will_exceed'] else '✅ On track'}"
+        f"Predicted end: {stats['predicted']} AED {'⚠️ Over budget' if stats['will_exceed'] else '✅ On track'}",
     ]
     send_markdown(REMINDER_CHAT_ID, "\n".join(lines))
     logging.info("Daily reminder sent to %s", REMINDER_CHAT_ID)
@@ -280,7 +287,6 @@ def schedule_daily_job():
     if not REMINDER_TIME or not REMINDER_CHAT_ID:
         logging.info("No REMINDER_TIME or REMINDER_CHAT_ID set; skipping scheduling.")
         return
-    hh, mm = (0,0)
     try:
         hh, mm = map(int, REMINDER_TIME.split(":"))
     except:
@@ -288,7 +294,7 @@ def schedule_daily_job():
         return
     sched = BackgroundScheduler(timezone=tz)
     sched.start()
-    sched.add_job(send_daily_report_job, 'cron', hour=hh, minute=mm)
+    sched.add_job(send_daily_report_job, "cron", hour=hh, minute=mm)
     logging.info("Scheduled daily job at %02d:%02d %s", hh, mm, TIMEZONE)
 
 # ---------- Main polling loop ----------
@@ -299,10 +305,7 @@ def main():
     offset = None
     while True:
         updates = fetch_updates(offset=offset, timeout=60)
-        if not updates:
-            time.sleep(1)
-            continue
-        if "result" not in updates:
+        if not updates or "result" not in updates:
             time.sleep(1)
             continue
         for up in updates["result"]:
@@ -317,12 +320,10 @@ def main():
                 text = msg.get("text", "").strip()
                 logging.info("Received from %s (%s): %s", username, user_id, text)
 
-                # permission check
                 if not is_allowed(user_id):
                     send_message(chat_id, "🚫 You are not allowed to use this bot.")
                     continue
 
-                # commands:
                 if text.startswith("/"):
                     parts = text.split()
                     cmd = parts[0].lower()
@@ -337,9 +338,9 @@ def main():
                             amt, cat, note = parsed
                             add_expense_db(user_id, username, amt, cat, note)
                             send_message(chat_id, f"✅ Logged {amt} AED ({cat})")
-                    elif cmd == "/daily" or cmd == "/today":
+                    elif cmd in ["/daily", "/today"]:
                         send_message(chat_id, f"Your spending today: {get_user_today_total(user_id)} AED")
-                    elif cmd == "/monthly" or cmd == "/total":
+                    elif cmd in ["/monthly", "/total"]:
                         send_message(chat_id, f"This month's total: {get_month_totals()} AED")
                     elif cmd == "/predict":
                         stats = compute_forecast_and_stats()
@@ -355,7 +356,7 @@ def main():
                             f"Days left: {s['days_left']}",
                             f"Forecast: {s['predicted']} AED {'⚠️' if s['will_exceed'] else ''}",
                             "",
-                            "🔎 By user:"
+                            "🔎 By user:",
                         ]
                         for u in by_user:
                             lines.append(f"- {u['user']}: {u['total']} AED")
@@ -390,20 +391,19 @@ def main():
                         send_message(chat_id, "Unknown command. Use /summary, /spent, /daily, /predict.")
                     continue
 
-                # If not command, try parse "50 food note"
                 parsed = parse_expense_text(text)
                 if parsed:
                     amt, cat, note = parsed
                     try:
                         add_expense_db(user_id, username, amt, cat, note)
                         send_message(chat_id, f"✅ Logged {amt} AED ({cat})")
-                    except Exception as e:
+                    except Exception:
                         logging.exception("DB insert failed")
                         send_message(chat_id, "❌ Failed to save expense.")
                 else:
                     send_message(chat_id, "I didn't understand. Send `/spent 50 food note` or just `50 food note`.")
-            except Exception as e:
-                logging.exception("Error processing update: %s", e)
+            except Exception:
+                logging.exception("Error processing update")
         time.sleep(0.5)
 
 if __name__ == "__main__":
