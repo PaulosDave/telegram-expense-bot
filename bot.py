@@ -121,14 +121,17 @@ def get_today_total():
 
 def get_by_user_month():
     with db_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                "SELECT COALESCE(username, user_id)::text AS user, SUM(amount) as total "
-                "FROM expenses WHERE to_char(created_at,'YYYY-MM') = to_char(now(),'YYYY-MM') "
-                "GROUP BY user ORDER BY total DESC"
-            )
-            rows = cur.fetchall()
-            return [{"user": r["user"], "total": float(r["total"])} for r in rows]
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COALESCE(username, user_id::text) AS user,
+                       SUM(amount) as total
+                FROM expenses
+                WHERE to_char(created_at, 'YYYY-MM') = to_char(now(), 'YYYY-MM')
+                GROUP BY user
+                ORDER BY total DESC
+            """)
+            return cur.fetchall()
+
 
 def get_user_month_total(user_id):
     with db_conn() as conn:
