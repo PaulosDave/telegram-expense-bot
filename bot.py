@@ -1,45 +1,46 @@
 import os
-import logging
 import requests
-from flask import Flask, request
+import time
+import logging
 
-# Logging
 logging.basicConfig(level=logging.INFO)
 
-# Bot config
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # Optional if you want to lock to one user
-TELEGRAM_URL = f"https://api.telegram.org/bot{TOKEN}"
+if not TOKEN:
+    raise Exception("❌ TELEGRAM_TOKEN not set in environment variables!")
 
-# Flask server (needed for Railway/Heroku)
-app = Flask(__name__)
+URL = f"https://api.telegram.org/bot{TOKEN}"
 
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    data = request.get_json()
-    logging.info(f"Update: {data}")
-
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
-
-        if text.startswith("/start"):
-            send_message(chat_id, "👋 Welcome! Send me your expenses like: 50 food")
-        else:
-            send_message(chat_id, f"✅ Recorded: {text}")
-
-    return {"ok": True}
+def get_updates(offset=None):
+    try:
+        params = {"timeout": 100, "offset": offset}
+        resp = requests.get(URL + "/getUpdates", params=params, timeout=120)
+        return resp.json()
+    except Exception as e:
+        logging.error(f"Error fetching updates: {e}")
+        return {}
 
 def send_message(chat_id, text):
-    url = f"{TELEGRAM_URL}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    r = requests.post(url, json=payload)
-    return r.json()
+    try:
+        requests.post(URL + "/sendMessage", data={"chat_id": chat_id, "text": text})
+    except Exception as e:
+        logging.error(f"Error sending message: {e}")
 
-@app.route("/", methods=["GET"])
-def home():
-    return "Bot is running!"
+def main():
+    logging.info("🤖 Bot started with polling...")
+    offset = None
+    while True:
+        updates = get_updates(offset)
+        if "result" in updates:
+            for update in updates["result"]:
+                if "message" in update:
+                    chat_id = update["message"]["chat"]["id"]
+                    text = update["message"].get("text", "")
+                    logging.info(f"📩 Message from {chat_id}: {text}")
+                    send_message(chat_id, f"You said: {text}")
+                    offset = update["update_id"] + 1
+        time.sleep(1)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    main()
+
