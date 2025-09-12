@@ -127,10 +127,11 @@ def get_by_user_month():
                        SUM(amount) as total
                 FROM expenses
                 WHERE to_char(created_at, 'YYYY-MM') = to_char(now(), 'YYYY-MM')
-                GROUP BY user
+                GROUP BY COALESCE(username, user_id::text)
                 ORDER BY total DESC
             """)
             return cur.fetchall()
+
 
 
 def get_user_month_total(user_id):
