@@ -57,15 +57,17 @@ def init_db():
       value TEXT
     );
     """
+    sql_create_user_settings = """
+    CREATE TABLE IF NOT EXISTS user_settings (
+      user_id BIGINT PRIMARY KEY,
+      budget NUMERIC
+    );
+    """
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql_create_expenses)
             cur.execute(sql_create_settings)
-            cur.execute(
-                "INSERT INTO settings (key, value) SELECT 'budget', %s "
-                "WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key='budget')",
-                (str(MONTHLY_BUDGET_ENV),),
-            )
+            cur.execute(sql_create_user_settings)
         conn.commit()
     logging.info("Database initialized.")
 
@@ -177,6 +179,26 @@ def get_budget():
         except:
             return MONTHLY_BUDGET_ENV
     return MONTHLY_BUDGET_ENV
+
+# ---------- Per-user budget helpers ----------
+def get_user_budget(user_id):
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT budget FROM user_settings WHERE user_id=%s", (user_id,))
+            r = cur.fetchone()
+            if r and r[0] is not None:
+                return float(r[0])
+            return MONTHLY_BUDGET_ENV  # default 300
+
+def set_user_budget(user_id, amount):
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO user_settings (user_id, budget) VALUES (%s,%s) "
+                "ON CONFLICT (user_id) DO UPDATE SET budget=EXCLUDED.budget",
+                (user_id, amount),
+            )
+        conn.commit()
 
 # ---------- Telegram helpers ----------
 def send_message(chat_id, text, reply_markup=None):
@@ -398,15 +420,17 @@ def main():
                         else:
                             try:
                                 new_b = float(args[0])
-                                set_setting("budget", new_b)
-                                send_message(chat_id, f"✅ Budget updated to {new_b} AED")
+                                set_user_budget(user_id, new_b)
+                                send_message(chat_id, f"✅ Your budget updated to {new_b} AED")
                             except Exception:
                                 send_message(chat_id, "Invalid amount.")
                     elif cmd == "/budget":
-                        send_message(chat_id, f"Budget: {get_budget()} AED")
+                        send_message(chat_id, f"Your budget: {get_user_budget(user_id)} AED")
                     elif cmd == "/balance":
-                        s = compute_forecast_and_stats()
-                        send_message(chat_id, f"Remaining this month: {s['remaining']} AED")
+                        total_spent = get_user_month_total(user_id)
+                        budget = get_user_budget(user_id)
+                        remaining = budget - total_spent
+                        send_message(chat_id, f"Your balance: {remaining} AED (Spent {total_spent} / Budget {budget})")
                     elif cmd == "/daysleft":
                         s = compute_forecast_and_stats()
                         send_message(chat_id, f"Days left: {s['days_left']} of {s['days_in_month']}")
