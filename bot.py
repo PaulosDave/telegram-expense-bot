@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 """
 Telegram expense bot (polling) + PostgreSQL storage + scheduled daily report.
-
-Environment variables (set these in Railway -> Variables):
-- TELEGRAM_TOKEN         (required) your bot token
-- DATABASE_URL           (Railway provides automatically)
-- MONTHLY_BUDGET         (optional, default 300)
-- REMINDER_CHAT_ID       (optional) chat id to send daily report to
-- REMINDER_TIME          (optional) "HH:MM" (24h) local time to send daily report
-- TIMEZONE               (optional) timezone string, default "UTC" or "Asia/Dubai"
-- ALLOWED_USER_IDS       (optional) comma-separated Telegram user ids allowed to use bot
 """
+
 import os
 import time
 import logging
@@ -35,7 +27,7 @@ URL = f"https://api.telegram.org/bot{TOKEN}"
 DATABASE_URL = os.getenv("DATABASE_URL")  # Railway sets this
 MONTHLY_BUDGET_ENV = float(os.getenv("MONTHLY_BUDGET", "300"))
 REMINDER_CHAT_ID = os.getenv("REMINDER_CHAT_ID", "").strip() or None
-REMINDER_TIME = os.getenv("REMINDER_TIME", "").strip() or None  # "21:00"
+REMINDER_TIME = os.getenv("REMINDER_TIME", "").strip() or None
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Dubai")
 ALLOWED_USER_IDS = [s.strip() for s in os.getenv("ALLOWED_USER_IDS", "").split(",") if s.strip()]
 
@@ -43,13 +35,11 @@ tz = pytz.timezone(TIMEZONE)
 
 # ---------- Database helpers ----------
 def db_conn():
-    """Return a new psycopg2 connection (caller must close)."""
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL not set")
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 def init_db():
-    """Create tables if they don't exist and ensure budget setting exists."""
     sql_create_expenses = """
     CREATE TABLE IF NOT EXISTS expenses (
       id SERIAL PRIMARY KEY,
@@ -71,9 +61,9 @@ def init_db():
         with conn.cursor() as cur:
             cur.execute(sql_create_expenses)
             cur.execute(sql_create_settings)
-            # ensure budget exists in settings (if absent, use env)
             cur.execute(
-                "INSERT INTO settings (key, value) SELECT 'budget', %s WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key='budget')",
+                "INSERT INTO settings (key, value) SELECT 'budget', %s "
+                "WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key='budget')",
                 (str(MONTHLY_BUDGET_ENV),),
             )
         conn.commit()
@@ -132,9 +122,6 @@ def get_by_user_month():
             """)
             return cur.fetchall()
 
-
-
-
 def get_user_month_total(user_id):
     with db_conn() as conn:
         with conn.cursor() as cur:
@@ -192,18 +179,22 @@ def get_budget():
     return MONTHLY_BUDGET_ENV
 
 # ---------- Telegram helpers ----------
-def send_message(chat_id, text):
+def send_message(chat_id, text, reply_markup=None):
     try:
-        resp = requests.post(URL + "/sendMessage", json={"chat_id": chat_id, "text": text})
+        payload = {"chat_id": chat_id, "text": text}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        resp = requests.post(URL + "/sendMessage", json=payload)
         resp.raise_for_status()
     except Exception as e:
         logging.exception("send_message failed: %s", e)
 
-def send_markdown(chat_id, text):
+def send_markdown(chat_id, text, reply_markup=None):
     try:
-        resp = requests.post(
-            URL + "/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-        )
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        resp = requests.post(URL + "/sendMessage", json=payload)
         resp.raise_for_status()
     except Exception as e:
         logging.exception("send_message failed: %s", e)
@@ -219,7 +210,24 @@ def fetch_updates(offset=None, timeout=60):
         logging.exception("fetch_updates failed: %s", e)
         return {}
 
-# ---------- Business logic / stats ----------
+# ---------- Keyboards ----------
+def main_menu_keyboard():
+    return {
+        "keyboard": [[{"text": "📋 All Menu"}]],
+        "resize_keyboard": True
+    }
+
+def submenu_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "/summary"}, {"text": "/daily"}],
+            [{"text": "/monthly"}, {"text": "/predict"}],
+            [{"text": "⬅️ Back"}]
+        ],
+        "resize_keyboard": True
+    }
+
+# ---------- Business logic ----------
 def days_in_month(dt=None):
     if dt is None:
         dt = datetime.now(tz)
@@ -329,12 +337,24 @@ def main():
                     send_message(chat_id, "🚫 You are not allowed to use this bot.")
                     continue
 
+                # ---------- Menu Handling ----------
+                if text == "📋 All Menu":
+                    send_message(chat_id, "Choose an option:", reply_markup=submenu_keyboard())
+                    continue
+                elif text == "⬅️ Back":
+                    send_message(chat_id, "Back to main menu.", reply_markup=main_menu_keyboard())
+                    continue
+
                 if text.startswith("/"):
                     parts = text.split()
                     cmd = parts[0].lower()
                     args = parts[1:]
                     if cmd == "/start":
-                        send_message(chat_id, "👋 Hi! Send expenses like: `50 food lunch` or `/spent 50 food lunch`. Use /summary for stats.")
+                        send_message(chat_id,
+                            "👋 Hi! Send expenses like: `50 food lunch` or `/spent 50 food lunch`. "
+                            "Use /summary for stats.",
+                            reply_markup=main_menu_keyboard()
+                        )
                     elif cmd == "/spent":
                         parsed = parse_expense_text(text)
                         if not parsed:
